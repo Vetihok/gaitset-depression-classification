@@ -1,0 +1,16 @@
+*.pyc
+__pycache__/
+model/
+model_3/
+model_4/
+*.txt
+*.log
+*.md
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.npz
+*.zip
+*.tar
+*.yaml
