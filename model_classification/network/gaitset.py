@@ -7,15 +7,14 @@ from config import conf
 
 
 class SetNet(nn.Module):
-    def __init__(self, hidden_dim):
+    def __init__(self, hidden_dim, dropout_cfg):
         super(SetNet, self).__init__()
         self.hidden_dim = hidden_dim
         self.batch_frame = None
 
         # --- Dropout ---
-        dropout_cfg = conf.get("dropout", {})
         dropout_enabled = dropout_cfg.get("enabled", False)
-        dropout_p = dropout_cfg.get("p", 0.2)
+        dropout_p = dropout_cfg.get("encoder_p", 0.2)
         self.dropout = nn.Dropout2d(p=dropout_p) if dropout_enabled else None
 
         _set_in_channels = 1

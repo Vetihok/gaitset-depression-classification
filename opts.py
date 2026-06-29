@@ -82,19 +82,19 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Fine-tune GaitSet on D-Gait, then classify depression from embeddings')
     parser.add_argument('-c', '--config', dest='config', required=True, type=str,
                         help='Config ID to load (e.g., 1 loads config_1.yaml). Required.')
-    parser.add_argument('--use_pretrained', dest='use_pretrained', nargs='?', const=True, default=False, type=boolean_string,
-                        help='Set TRUE or FALSE, or use --use_pretrained as a flag (implies TRUE). It loads only the encoder specified at the path specified in the config file. Default: FALSE')
-    parser.add_argument('--restore_iter', dest='restore_iter', nargs='?', const=-1, default=0, type=int,
-                        help='Set number of iteration, or use --restore_iter as a flag (implies last). Default: 0')
-    parser.add_argument('--eval_interval', default=100, type=int,
-                        help='Set number of iteration to wait until next valuation metrics are compute. Default: 100')
-    parser.add_argument('--train', dest='train', nargs='?', const=20000, default=0, type=int,
-                        help='Set number of iteration, or use --train as a flag (implies 20000). Default: 0')
+    parser.add_argument('--train', dest='train', nargs='?', const=True, default=False, type=boolean_string,
+                        help='Set number of iteration, or use --train as a flag (implies TRUE). Default: FALSE')
     parser.add_argument('--test', dest='test', nargs='?', const=True, default=False, type=boolean_string,
                         help='Set TRUE or FALSE, or use --test as a flag (implies TRUE). Default: FALSE')
+    parser.add_argument('--get_metrics', dest='get_metrics', nargs='?', const=True, default=False, type=boolean_string,
+                        help='Set TRUE or FALSE, or use --get_metrics as a flag (implies TRUE). Default: FALSE')
+    parser.add_argument('--debug', dest='debug', nargs='?', const=True, default=False, type=boolean_string,
+                        help='No checkpoint directory is created. Everything is saved in a directory called debug. Set TRUE or FALSE, or use --debug as a flag (implies TRUE). Default: FALSE')
     parser.add_argument('--summary', dest='summary', nargs='?', const=True, default=False, type=boolean_string,
                         help='Show model summary. Set TRUE or FALSE, or use --summary as a flag (implies TRUE). Default: FALSE')
     parser.add_argument('--log_level', default=_logging.INFO, type=log_level_string,
                         help='Logging level can be: DEBUG, INFO, WARNING, ERROR, CRITICAL, FATAL. Default: INFO')
+    parser.add_argument('--parse_log', default=None, type=str,
+                        help='Log file path to parse. Default: None')
     return parser.parse_args()
 
