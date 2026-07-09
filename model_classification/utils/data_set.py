@@ -24,22 +24,25 @@ class DataSet(tordata.Dataset):
         self.label_set = set(self.label)
         self.seq_type_set = set(self.seq_type)
         self.view_set = set(self.view)
-        _ = np.zeros((len(self.label_set),
+        _ = np.zeros((len(self.patient_id),
+                      len(self.label_set),
                       len(self.seq_type_set),
                       len(self.view_set))).astype('int')
         _ -= 1
         self.index_dict = xr.DataArray(
             _,
-            coords={'label': sorted(list(self.label_set)),
+            coords={'patient_id': sorted(list(self.patient_id)),
+                    'label': sorted(list(self.label_set)),
                     'seq_type': sorted(list(self.seq_type_set)),
                     'view': sorted(list(self.view_set))},
-            dims=['label', 'seq_type', 'view'])
+            dims=['patient_id', 'label', 'seq_type', 'view'])
 
         for i in range(self.data_size):
+            _patient_id = self.patient_id[i]
             _label = self.label[i]
             _seq_type = self.seq_type[i]
             _view = self.view[i]
-            self.index_dict.loc[_label, _seq_type, _view] = i
+            self.index_dict.loc[_patient_id, _label, _seq_type, _view] = i
 
     def load_all_data(self):
         for i in range(self.data_size):

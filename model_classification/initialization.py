@@ -15,11 +15,6 @@ from .model import Model
 from opts import get_opts
 
 log = logging.getLogger(__name__)
-# Determine log level from shared opts if available
-"""_opts = get_opts(parse_if_missing=False, defaults={'log_level': logging.INFO})
-_level = _opts.log_level if (_opts is not None and hasattr(_opts, 'log_level')) else logging.INFO
-log.setLevel(_level)"""
-# Modules should not add handlers; the application entrypoint configures them.
 
 def initialize_data(config, train=False, test=False):
     log.info("Initializing data source...")
@@ -44,6 +39,7 @@ def initialize_model(config, train_source, val_source, test_source):
     r_drop_cfg = deepcopy(model_config.get('r_drop', {}))
     dropout_cfg = deepcopy(model_config.get('dropout', {}))
     sampler_cfg = deepcopy(model_config.get('sampler', {}))
+    classifier_head_cfg = deepcopy(model_config.get('classifier_head', None))
 
     model_param = {
         'model_name': model_config['model_name'],
@@ -67,6 +63,7 @@ def initialize_model(config, train_source, val_source, test_source):
         'rdrop_cfg': r_drop_cfg,
         'dropout_cfg': dropout_cfg,
         'sampler_cfg': sampler_cfg,
+        'classifier_head_cfg': classifier_head_cfg,
         "early_stop_cfg": deepcopy(model_config.get('early_stop', {})),
         "freeze_cfg": deepcopy(model_config.get('freeze', {}))
     }
@@ -85,13 +82,13 @@ def initialize_model(config, train_source, val_source, test_source):
     ]))
 
     m = Model(**model_param)
-
-    if m.restore_epoch != 0:
-        if config.get("RESTORE_DIR", None) is not None:
-            log.info(f'Loading model checkpoint at {config.get("RESTORE_DIR", None)}')
-            m.load(m.restore_epoch)
-        if model_config.get("pretrained_model", {}).get("enabled", False):
-            log.warning("Can't load pretrained model if restore_epoch is not equal to 0.")
+    opt = get_opts()
+    
+    if opt.restore_dir or m.restore_epoch != 0:
+        log.info(f'Loading model checkpoint at {config.get("RESTORE_DIR", None)}')
+        m.load(m.restore_epoch, find_last_epoch=bool(opt.restore_dir))
+        # if model_config.get("pretrained_model", {}).get("enabled", False):
+        #     log.warning("Can't load pretrained model if restore_epoch is not equal to 0.")
     else:
         if model_config.get("pretrained_model", {}).get("enabled", False):
             m.load_pretrained(model_config.get("pretrained_model", {})["PRETRAINED_PATH"])
@@ -102,8 +99,8 @@ def initialize_model(config, train_source, val_source, test_source):
 
 def initialization(config, train=False, test=False):
     log.info("Initialzing...")
-    WORK_PATH = get_cwd()
-    os.chdir(WORK_PATH)
+    #WORK_PATH = get_cwd()
+    #os.chdir(WORK_PATH)
     os.environ["CUDA_VISIBLE_DEVICES"] = config["CUDA_VISIBLE_DEVICES"]
     train_source, val_source, test_source = initialize_data(config, train, test)
     return initialize_model(config, train_source, val_source, test_source)

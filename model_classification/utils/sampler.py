@@ -32,19 +32,23 @@ class CETripletSampler(tordata.sampler.Sampler):
     def __init__(self, dataset, batch_size):
         self.dataset = dataset
         self.batch_size = batch_size
+        self.batch_total_size = self.batch_size[0] * self.batch_size[1]
+
+    def __len__(self):
+        return (len(self.dataset) + self.batch_total_size - 1) // self.batch_total_size
 
     def __iter__(self):
-        while (True):
+        for _ in range(len(self)):
             sample_indices = list()
 
-            neg_patient_ids = [x for x, label in zip(self.dataset.patient_id, self.dataset.label) if label == 0]
-            pos_patient_ids = [x for x, label in zip(self.dataset.patient_id, self.dataset.label) if label == 1]
-
+            neg_patient_ids = list(set([x for x, label in zip(self.dataset.patient_id, self.dataset.label) if label == 0]))
+            pos_patient_ids = list(set([x for x, label in zip(self.dataset.patient_id, self.dataset.label) if label == 1]))
+            
             pid_list = random.sample(neg_patient_ids, self.batch_size[0]//2) + random.sample(pos_patient_ids, self.batch_size[0]//2)
             random.shuffle(pid_list)
 
             for pid in pid_list:
-                _index = self.dataset.index_dict.loc[pid, :, :].values
+                _index = self.dataset.index_dict.loc[pid, :, :, :].values
                 _index = _index[_index > 0].flatten().tolist()
                 _index = random.choices(
                     _index,
@@ -53,5 +57,5 @@ class CETripletSampler(tordata.sampler.Sampler):
             
             yield sample_indices
 
-    def __len__(self):
-        return self.dataset.data_size
+    # def __len__(self):
+    #     return self.dataset.data_size

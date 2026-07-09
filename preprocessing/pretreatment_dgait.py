@@ -39,7 +39,7 @@ def boolean_string(s):
 parser = argparse.ArgumentParser(description='D-Gait Pretreatment')
 parser.add_argument('--input_path', default='/home/docker/DATA/D-Gait/D-Gait-Silhouette', type=str,
                     help='Root path of raw D-Gait dataset.')
-parser.add_argument('--output_path', default='/home/docker/DATA/D-Gait/D-Gait-Silhouette-preprocess', type=str,
+parser.add_argument('--output_path', default='/home/docker/DATA/D-Gait/D-Gait-Silhouette-preprocess-blur', type=str,
                     help='Root path for output.')
 parser.add_argument('--log_file', default='./pretreatment_dgait.log', type=str,
                     help='Log file path. Default: ./pretreatment_dgait.log')
@@ -125,7 +125,20 @@ def cut_img(img, seq_info, frame_name, pid):
         _ = np.zeros((img.shape[0], h_T_W))
         img = np.concatenate([_, img, _], axis=1)
     img = img[:, left:right]
-    return img.astype('uint8')
+
+    try:
+        from scipy.ndimage import gaussian_filter
+        img = gaussian_filter(img.astype(np.float32), sigma=0.8)
+    except Exception:
+        pad = ((1, 1), (1, 1))
+        p = np.pad(img.astype(np.float32), pad, mode='constant', constant_values=0)
+        s = (p[:-2, :-2] + p[:-2, 1:-1] + p[:-2, 2:] +
+             p[1:-1, :-2] + p[1:-1, 1:-1] + p[1:-1, 2:] +
+             p[2:, :-2] + p[2:, 1:-1] + p[2:, 2:]) / 9.0
+        img = s
+
+    img = np.clip(img, 0, 255).astype('uint8')
+    return img
 
 
 def cut_pickle(seq_info, pid):

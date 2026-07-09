@@ -3,6 +3,7 @@ __pycache__/
 model/
 model_3/
 model_4/
+tests/
 *.txt
 *.log
 *.md

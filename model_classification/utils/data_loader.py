@@ -55,7 +55,7 @@ def _stratified_split_patients(pid_list, patient_to_label, ratios, rng):
     return [train, val, test]
 
 
-def load_data(dataset_path, resolution, dataset, partitioning, cache=True):
+def load_data(dataset_path, resolution, dataset, partitioning, k_fold, cache=True):
     seq_dir = list()
     view = list()
     seq_type = list()
@@ -63,7 +63,7 @@ def load_data(dataset_path, resolution, dataset, partitioning, cache=True):
     patient_id = list()
 
     c = 0
-    log.debug(f"{str(sorted(os.listdir(dataset_path)))=:.100}")
+    # log.debug(f"{str(sorted(os.listdir(dataset_path)))=:.100}")
     for _patient_id in sorted(os.listdir(dataset_path)):
         # In CASIA-B, data of subject #5 is incomplete.
         # Thus, we ignore it in training.
@@ -72,8 +72,8 @@ def load_data(dataset_path, resolution, dataset, partitioning, cache=True):
         label_path = osp.join(dataset_path, _patient_id)
         if c <= 3:
             c += 1
-            log.debug(f"_patient_id = {type(_patient_id)} = {clinical_label(_patient_id)}")
-            log.debug(f"label_path = {label_path}")
+            # log.debug(f"_patient_id = {type(_patient_id)} = {clinical_label(_patient_id)}")
+            # log.debug(f"label_path = {label_path}")
         for _seq_type in sorted(os.listdir(label_path)):
             seq_type_path = osp.join(label_path, _seq_type)
             for _view in sorted(os.listdir(seq_type_path)):
@@ -132,19 +132,19 @@ def load_data(dataset_path, resolution, dataset, partitioning, cache=True):
         else:
             raise ValueError(f"Unknown split_mode: {split_mode!r}")
 
-        log.debug(f"split_mode = {split_mode}, ratios = {split_ratios}")
-        log.debug(f"partition sizes = {[len(p) for p in partition]}")
+        # log.debug(f"split_mode = {split_mode}, ratios = {split_ratios}")
+        # log.debug(f"partition sizes = {[len(p) for p in partition]}")
         with open(pid_fname, 'wb') as f:
             pickle.dump({'split_mode': split_mode, 'partition': partition}, f)
 
-    log.debug(f"pid_fname = {pid_fname}")
+    # log.debug(f"pid_fname = {pid_fname}")
     with open(pid_fname, 'rb') as f:
         saved = pickle.load(f)
     train_keys, val_keys, test_keys = saved['partition']
 
-    log.debug(f"train_keys = {train_keys}")
-    log.debug(f"val_keys = {val_keys}")
-    log.debug(f"test_keys = {test_keys}")
+    # log.debug(f"train_keys = {train_keys}")
+    # log.debug(f"val_keys = {val_keys}")
+    # log.debug(f"test_keys = {test_keys}")
 
     if split_mode == 'sequence':
         def build_source(idxs):
