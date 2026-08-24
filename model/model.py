@@ -1,3 +1,4 @@
+from contextlib import redirect_stdout
 import logging
 import math
 import os
@@ -23,8 +24,8 @@ from config import conf
 from opts import get_opts
 from .network import BinaryClassificationNet, CETripletLoss
 from .utils import ClassificationSampler, CETripletSampler
-from classify_depression import get_cwd, get_general_save_path
-from metrics_utils import plot_metric_curve2
+from env_manager import EnvManager
+from evaluation.plotting.curve import plot_metric_curve2
 
 log = logging.getLogger(__name__)
 
@@ -108,13 +109,11 @@ class Model:
                  img_size=64):
 
         self.save_name = save_name
-        #self.train_pid_num = train_pid_num
         self.train_source = train_source
         self.val_source = val_source
         self.test_source = test_source
 
         self.hidden_dim = hidden_dim
-        #self.lr = lr
         self.frame_num = frame_num
         self.num_workers = num_workers
         
@@ -129,21 +128,23 @@ class Model:
 
         #self.restore_iter = restore_iter
         self.restore_epoch = restore_epoch
+        self.best_val_f1_epoch = 0
         self.epoch = 1 if self.restore_epoch == 0 else self.restore_epoch
         #self.total_iter = total_iter
         self.num_epochs = num_epochs
         self.eval_interval = eval_interval
         self.img_size = img_size
 
+        env = EnvManager.get_instance()
         # Initialize binary classification network
-        self.device = resolve_device(conf.get("USE_CPU", False))
+        self.device = resolve_device(env.use_cpu)
         self.model = BinaryClassificationNet(
             dropout_cfg,
             freeze_cfg,
             self.hidden_dim,
             classifier_head_cfg=classifier_head_cfg,
         ).float()
-        if not conf.get("USE_CPU", False):
+        if not env.use_cpu:
             self.model = nn.DataParallel(self.model)
         self.model.to(self.device)
 
@@ -168,13 +169,22 @@ class Model:
 
         # --- Optimizer ---
         opt_type = opt_cfg.get("type", "Adam")
-        self.lr = opt_cfg.get("lr", 0.0001)
+        self.encoder_lr = opt_cfg.get("encoder_lr", 0.0001)
+        self.head_lr = opt_cfg.get("head_lr", 0.0001)
         wd = opt_cfg.get("weight_decay", 0.0)
 
+        params = [
+                    {"params": self.model.encoder.parameters(), "lr": self.encoder_lr},
+                    {"params": self.model.classifier.parameters(), "lr": self.head_lr},
+                ] if env.use_cpu else [
+                    {"params": self.model.module.encoder.parameters(), "lr": self.encoder_lr},
+                    {"params": self.model.module.classifier.parameters(), "lr": self.head_lr},
+                ]
+
         if opt_type == "SGD":
-            self.optimizer = optim.SGD(self.model.parameters(), lr=self.lr, weight_decay=wd)
+            self.optimizer = optim.SGD(params, weight_decay=wd)
         elif opt_type == "Adam":
-            self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr, weight_decay=wd)
+            self.optimizer = optim.Adam(params, weight_decay=wd)
         else:
             raise ValueError(f"Unknown Optimizer : {opt_type}")
 
@@ -248,7 +258,7 @@ class Model:
                 drop_last=False
             )
         elif self.sampler_type == "CETripletSampler":
-            self.train_batch_sampler = CETripletSampler(self.train_source, self.batch_sample)
+            self.train_batch_sampler = CETripletSampler(self.train_source, self.batch_sample, sampler_cfg=sampler_cfg)
         else:
             raise ValueError(f"Unknown sampler : {sch_type}")
 
@@ -263,13 +273,13 @@ class Model:
         self.history = None
         self.sample_type = sampler_cfg.get("sample_type", "all")
 
+        # --- Data Augmentation ---
         aug_cfg = conf.get("model", {}).get("augmentation", {})
         self.augment_enabled = aug_cfg.get("enabled", False)
         self.augment_prob = aug_cfg.get("prob", 0.5)
         self.augment_horizontal_flip = aug_cfg.get("horizontal_flip", True)
         self.augment_gaussian_noise = aug_cfg.get("gaussian_noise", True)
         self.augment_random_erasing = aug_cfg.get("random_erasing", True)
-        # Additional augmentations
         self.augment_random_translation = aug_cfg.get("random_translation", True)
         self.augment_max_translation = aug_cfg.get("max_translation", 4)  # pixels
         self.augment_rotation = aug_cfg.get("rotation", True)
@@ -432,6 +442,21 @@ class Model:
         return aug
 
     def collate_fn(self, batch):
+        """Collate samples into the model's feature and metadata batch format.
+
+        For random sampling, ``self.frame_num`` frames are selected from each
+        sample. For full-sequence sampling, samples are split across available
+        GPUs and padded to a common frame count; the unpadded frame counts are
+        stored in the fifth returned element.
+
+        Args:
+            batch: Iterable of samples containing feature sequences, frame
+                indices, view, sequence type, label, and patient ID.
+
+        Returns:
+            A list containing feature arrays, views, sequence types, labels,
+            optional frame-count metadata, and patient IDs.
+        """
         batch_size = len(batch)
         feature_num = len(batch[0][0])
         seqs = [batch[i][0] for i in range(batch_size)]
@@ -443,6 +468,7 @@ class Model:
         batch = [seqs, view, seq_type, label, None, patient_id]
 
         def select_frame(index):
+            """Select frames for one sample and return its feature arrays."""
             sample = seqs[index]
             frame_set = frame_sets[index]
             if self.sample_type == 'random':
@@ -493,12 +519,12 @@ class Model:
         return batch
 
     @staticmethod
-    def compute_rdrop_loss(criterion, logits1, logits2, target_label, alpha):
+    def compute_rdrop_loss(criterion, logits1, logits2, features1, features2, target_label, target_pid, alpha):
         """
         R-Drop loss: NLL sur les deux passes + divergence KL bidirectionnelle.
         Loss = -logP1 - logP2 + (alpha/2) * (KL(P1||P2) + KL(P2||P1))
         """
-        loss_nll = criterion(logits1, target_label) + criterion(logits2, target_label)
+        loss_nll = criterion(logits1, features1, target_label, target_pid) + criterion(logits2, features2, target_label, target_pid)
 
         p1 = torch.softmax(logits1, dim=-1)
         p2 = torch.softmax(logits2, dim=-1)
@@ -517,8 +543,8 @@ class Model:
         self.model.train()
         self.sample_type = 'random'
         
-        for param_group in self.optimizer.param_groups:
-            param_group['lr'] = self.lr
+        # for param_glrroup in self.optimizer.param_groups:
+        #     param_group['lr'] = self.
         
         train_loader = tordata.DataLoader(
             dataset=self.train_source,
@@ -549,7 +575,6 @@ class Model:
         #log.debug(f"{str(train_label_set)=:.100}")
 
         best_val_f1 = -1
-        self.best_val_f1_epoch = 0
         eval_interval = self.eval_interval
         training_iterations = len(train_loader)
         log.debug(f"{training_iterations=}")
@@ -608,7 +633,6 @@ class Model:
                 log.debug(f"{str(target_label)=}")
                 target_label = self.np2var(np.array(target_label)).long()
 
-                # --- before (one forward pass) ---
                 logits, features = self.model(*seq, batch_frame)
 
                 # log.debug(f"{len(*seq)=}")
@@ -645,16 +669,12 @@ class Model:
                 """
                 
 
-                # --- after (conditionnal R-Drop) ---
+                # --- conditionnal R-Drop ---
                 if self.rdrop_enabled:
-                    # logits, features   = self.model(*seq, batch_frame)   # passe 1
-                    logits2, _         = self.model(*seq, batch_frame)   # passe 2 (dropout différent)
+                    logits2, features2 = self.model(*seq, batch_frame)
                     loss = self.compute_rdrop_loss(
-                        self.criterion, logits, logits2, target_label, self.rdrop_alpha
+                        self.criterion, logits, logits2, features, features2, target_label, target_pid, self.rdrop_alpha
                     )
-                # else:
-                #     logits, features = self.model(*seq, batch_frame)
-                #     loss = self.criterion(logits, target_label)
 
                 # Backward pass
                 if loss > 1e-9:
@@ -705,63 +725,7 @@ class Model:
             log.info(f"Epoch {str(self.epoch).zfill(len(str(self.num_epochs)))}/{self.num_epochs}: TP={tp_tr}, FP={fp_tr}, TN={tn_tr}, FN={fn_tr}")
 
             if self.epoch % eval_interval == 0:
-                # Evaluate on test set
                 self.model.eval()
-                # val_loss = 0.0
-                # val_acc = 0.0
-                # val_f1 = 0.0
-                # val_recall = 0.0
-                # tn_val, fp_val, fn_val, tp_val = 0, 0, 0, 0
-
-                # try:
-                #     # with torch.no_grad():
-                #     outputs = self.transform('val', batch_size=1) #self.batch_size//16)
-                #     val_logits = outputs['logits']
-                #     val_labels = outputs['labels']
-                #     val_features = outputs['features']
-                #     val_pid = outputs['patient_ids']
-                #     # val_prob = outputs['probabilities']
-                #     if len(val_labels) > 0:
-                #         val_logits_t = torch.from_numpy(val_logits).cuda()
-                #         val_features_t = torch.from_numpy(val_features).cuda()
-                #         #val_prob_t = torch.from_numpy(val_prob).cuda()
-
-                #         target_val = np.array([val_label_set.index(l) for l in val_labels])
-                #         target_val_t = torch.from_numpy(target_val).long().cuda()
-
-                #         target_pid = np.array([val_pid_set.index(l) for l in val_pid])
-                #         target_pid_t = torch.from_numpy(target_pid).long().cuda()
-                #         if self.triplet_cfg.get('enabled', False):
-                #             val_loss = self.criterion(val_logits_t, val_features_t, target_val_t, target_pid_t).item()
-                #         else:
-                #             val_loss = self.criterion(val_logits_t, target_val_t).item()
-                        
-                #         val_pred = torch.argmax(val_logits_t, dim=1)
-                #         val_acc = (val_pred == target_val_t).float().mean().item()
-
-                #         # Calcul F1 et Recall pour classification binaire/multi-classe
-                #         val_pred_np = val_pred.cpu().numpy()
-                #         target_val_np = target_val_t.cpu().numpy()
-                #         val_f1 = f1_score(target_val_np, val_pred_np, average='binary')
-                #         val_recall = recall_score(target_val_np, val_pred_np, average='binary')
-                #         tn_val, fp_val, fn_val, tp_val = confusion_matrix(target_val_np, val_pred_np, labels=[0, 1]).ravel()
-                #     else:
-                #         log.warning(f'No validation labels found at epoch {self.epoch}')
-                # except Exception as e:
-                #     log.error(f'Error during validation at epoch {self.epoch}: {e}')
-                #     import traceback
-                #     log.error(traceback.format_exc())
-                #     val_loss = 0.0
-                #     val_acc = 0.0
-                #     val_f1 = 0.0
-                #     val_recall = 0.0
-
-                # # Record validation metrics
-                # val_loss_history.append(val_loss)
-                # val_acc_history.append(val_acc)
-                # val_f1_history.append(val_f1)
-                # val_recall_history.append(val_recall)
-                # val_iterations.append(self.epoch)
                 total_loss = 0.0
                 all_logits = []
                 all_labels = []
@@ -840,19 +804,20 @@ class Model:
                     'val_recall': val_recall_history,
                     'val_iterations': val_iterations
                 }
+                env = EnvManager.get_instance()
 
-                plot_metric_curve2(get_general_save_path('loss', 'png'), avg_loss_history, val_loss_history, val_iterations,
+                plot_metric_curve2(env.get_general_save_path('loss', 'png'), avg_loss_history, val_loss_history, val_iterations,
                                 metric_name="Loss", eval_interval=eval_interval)
-                plot_metric_curve2(get_general_save_path('accuracy', 'png'), avg_acc_history, val_acc_history, val_iterations,
+                plot_metric_curve2(env.get_general_save_path('accuracy', 'png'), avg_acc_history, val_acc_history, val_iterations,
                                 metric_name="Accuracy", eval_interval=eval_interval)
-                plot_metric_curve2(get_general_save_path('f1_score', 'png'), avg_f1_history, val_f1_history, val_iterations,
+                plot_metric_curve2(env.get_general_save_path('f1_score', 'png'), avg_f1_history, val_f1_history, val_iterations,
                     metric_name="F1-Score", eval_interval=eval_interval)
-                plot_metric_curve2(get_general_save_path('recall', 'png'), avg_recall_history, val_recall_history, val_iterations,
+                plot_metric_curve2(env.get_general_save_path('recall', 'png'), avg_recall_history, val_recall_history, val_iterations,
                     metric_name="Recall", eval_interval=eval_interval)
 
                 # Save only if validation f1-score improved
                 if val_f1 > best_val_f1:
-                    self.save()
+                    self.save(best_val_f1=val_f1)
                     log.warning(f"Model saved at epoch {self.epoch}: {val_f1=:.6f}, {best_val_f1=:.6f}")
                     best_val_f1 = val_f1
                     self.best_val_f1_epoch = self.epoch
@@ -861,7 +826,6 @@ class Model:
                     log.warning(f"Early stop : training interupted at epoch {self.epoch}: {best_val_f1=}, epoch={self.best_val_f1_epoch}")
                     break
 
-                # Return to train mode
                 self.model.train()
 
                 self.epoch += 1
@@ -941,69 +905,165 @@ class Model:
                 bar.next(len(label))
 
             bar.finish()
-        return {
-            'features': np.concatenate(feature_list, 0),
-            'logits': np.concatenate(logit_list, 0),
-            'probabilities': np.concatenate(prob_list, 0),
-            'views': view_list,
-            'seq_types': seq_type_list,
-            'labels': label_list,
-            'patient_ids': patient_id_list
-        }
+        return (
+            np.concatenate(feature_list, 0),
+            np.concatenate(logit_list, 0),
+            np.concatenate(prob_list, 0),
+            view_list,
+            seq_type_list,
+            label_list,
+            patient_id_list
+        )
 
-    def save(self):
-        """Save model checkpoint"""
-        model_path = get_general_save_path('{}-{:0>3}-model'.format(self.save_name, self.epoch), 'ptm', checkpoint=True)
-        optimizer_path = get_general_save_path('{}-{:0>3}-optimizer'.format(self.save_name, self.epoch), 'ptm', checkpoint=True)
+    def save(self, best_val_f1=None):
+        """
+        Save model checkpoint and update metadata.
 
+        Args:
+            val_f1 : float | None
+                Validation F1 score for the current epoch.
+                If None, only last_epoch is updated.
+        """
+
+        env = EnvManager.get_instance()
+
+        model_path = env.get_general_save_path(
+            f"{self.save_name}-{self.epoch:03d}-model",
+            "ptm",
+            checkpoint=True,
+        )
+
+        optimizer_path = env.get_general_save_path(
+            f"{self.save_name}-{self.epoch:03d}-optimizer",
+            "ptm",
+            checkpoint=True,
+        )
+
+        metadata_path = env.get_general_save_path("metadata", "json", checkpoint=True)
+
+        # Save checkpoints
         torch.save(self.model.state_dict(), model_path)
         torch.save(self.optimizer.state_dict(), optimizer_path)
 
-    def load(self, restore_epoch, init=True, find_last_epoch=True):
-        """Load model checkpoint"""
+        # Load existing metadata if available
+        if osp.exists(metadata_path):
+            with open(metadata_path, "r") as f:
+                metadata = json.load(f)
+        else:
+            metadata = {}
 
-        checkpoint_dir = get_cwd(checkpoint=True)
+        metadata["last_epoch"] = self.epoch
 
-        if find_last_epoch:
+        if best_val_f1 is not None:
+            metadata["best_epoch"] = self.epoch
+            metadata["best_val_f1"] = float(best_val_f1)
+
+        with open(metadata_path, "w") as f:
+            json.dump(metadata, f, indent=4)
+
+        log.info(f"Model checkpoint saved to {model_path}")
+
+    def load(self, restore_epoch=None, mode="last"):
+        """
+        Load a model checkpoint.
+
+        Args:
+            restore_epoch : int | None
+                Epoch to load when mode="epoch".
+
+            mode : {"last", "best", "epoch"}
+                last  -> load latest checkpoint.
+                best  -> load checkpoint with the best validation F1.
+                epoch -> load restore_epoch.
+        """
+
+        env = EnvManager.get_instance()
+
+        checkpoint_dir = env.get_dir(checkpoint=True)
+
+        metadata_path = env.get_general_save_path("metadata", "json", checkpoint=True)
+
+        if mode == "best":
+
+            if not osp.exists(metadata_path):
+                raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
+
+            with open(metadata_path, "r") as f:
+                metadata = json.load(f)
+
+            restore_epoch = metadata["best_epoch"]
+
+            log.info(f"Loading best checkpoint (epoch={restore_epoch})")
+
+        elif mode == "last":
+
+            pattern = re.compile(rf"^{re.escape(self.save_name)}-(\d+)-model\.ptm$")
+
+            epochs = []
+
             if osp.isdir(checkpoint_dir):
-                pattern = re.compile(rf"^{re.escape(self.save_name)}-(\d+)-model\.ptm$")
-                epochs = []
+
                 for filename in os.listdir(checkpoint_dir):
+
                     match = pattern.match(filename)
+
                     if match:
                         epochs.append(int(match.group(1)))
-                if epochs:
-                    restore_epoch = max(epochs)
-                    log.info(f"Found latest checkpoint epoch {restore_epoch} in {checkpoint_dir}")
-                else:
-                    log.warning(f"No matching checkpoints found in {checkpoint_dir}; using restore_epoch={restore_epoch}")
-            else:
-                log.warning(f"No checkpoint directory found in {checkpoint_dir}; using restore_epoch={restore_epoch}")
+
+            if not epochs:
+                raise FileNotFoundError(f"No checkpoints found in {checkpoint_dir}")
+
+            restore_epoch = max(epochs)
+
+            log.info(f"Loading last checkpoint (epoch={restore_epoch})")
+
+        elif mode == "epoch":
+
+            if restore_epoch is None:
+                raise ValueError("restore_epoch must be specified when mode='epoch'")
+
+            log.info(f"Loading checkpoint epoch {restore_epoch}")
+
+        else:
+            raise ValueError(f"Unknown mode '{mode}'")
 
         self.restore_epoch = restore_epoch
-        model_path = get_general_save_path('{}-{:0>3}-model'.format(self.save_name, self.restore_epoch), 'ptm', checkpoint=True)
-        optimizer_path = get_general_save_path('{}-{:0>3}-optimizer'.format(self.save_name, self.restore_epoch), 'ptm', checkpoint=True)
-
-        if osp.exists(model_path):
-            checkpoint = torch.load(model_path, map_location='cpu')
-            state_dict = checkpoint.get('state_dict', checkpoint)
-            state_dict = normalize_state_dict_for_load(
-                state_dict,
-                use_cpu=conf.get("USE_CPU", False),
-                model=self.model,
-                add_module_prefix=True,
-            )
-            self.model.load_state_dict(state_dict)
-            log.info(f'Model checkpoint loaded from {model_path}')
-        else:
-            log.warning(f'Model checkpoint not found at {model_path}')
+        self.epoch = restore_epoch
         
+        model_path = env.get_general_save_path(
+            f"{self.save_name}-{restore_epoch:03d}-model",
+            "ptm",
+            checkpoint=True,
+        )
+
+        optimizer_path = env.get_general_save_path(
+            f"{self.save_name}-{restore_epoch:03d}-optimizer",
+            "ptm",
+            checkpoint=True,
+        )
+
+        if not osp.exists(model_path):
+            raise FileNotFoundError(model_path)
+
+        checkpoint = torch.load(model_path, map_location="cpu")
+
+        state_dict = checkpoint.get("state_dict", checkpoint)
+        state_dict = normalize_state_dict_for_load(state_dict,use_cpu=conf.get("USE_CPU", False), model=self.model, add_module_prefix=True)
+        self.model.load_state_dict(state_dict, strict=True)
+
+        log.info(f"Model loaded from {model_path}")
+
         if osp.exists(optimizer_path):
-            optimizer_state = torch.load(optimizer_path, map_location='cpu')
-            self.optimizer.load_state_dict(optimizer_state)
-            log.info(f'Optimizer checkpoint loaded from {optimizer_path}')
+
+            optimizer_state = torch.load(optimizer_path, map_location="cpu")
+            try:
+                self.optimizer.load_state_dict(optimizer_state)
+                log.info(f"Optimizer loaded from {optimizer_path}")
+            except ValueError as e:
+                log.warning(f"Could not load optimizer state: {e}")
+
         else:
-            log.warning(f'Optimizer checkpoint not found at {optimizer_path}')
+            log.warning(f"Optimizer checkpoint not found at {optimizer_path}")
 
     def load_pretrained(self, restore_iter):
         """Load pre-trained encoder weights from a different dataset checkpoint.
@@ -1046,6 +1106,55 @@ class Model:
                 return
         
         log.warning(f'No pre-trained checkpoint found. Starting from scratch.')
-
     
+    def print_summary(self, b_std_out, b_file):
+        if not b_file and not b_std_out:
+            return
+        # Print model summary with detailed information
+        try:
+            # Create a sample input tensor matching the expected shape: (batch_size, channels, height, width)
+            # For silhouette images: batch_size=4, channels=1 (grayscale), 64x64 spatial dimensions
+            if not conf['USE_CPU']:
+                sample_input = torch.randn(128, 30, 64, 44).cuda()
+                actual_model = self.model.module
+            else:
+                sample_input = torch.randn(128, 30, 64, 44).to('cpu')
+                actual_model = self.model
 
+            from torchinfo import summary
+            class Tee:
+                def __init__(self, *files):
+                    self.files = files
+
+                def write(self, obj):
+                    for f in self.files:
+                        f.write(obj)
+                    return len(obj)
+
+                def flush(self):
+                    for f in self.files:
+                        f.flush()
+            
+            with open(EnvManager.get_instance().get_general_save_path("model_summary", "txt"), "w") as f:
+                out = []
+                if b_std_out:
+                    out.append(sys.stdout)
+                if b_file:
+                    out.append(f)
+                
+                with redirect_stdout(Tee(*out)):
+                    print("\n" + "="*80)
+                    print(f"MODEL SUMMARY")
+                    print("="*80)
+                    summary(
+                        actual_model,
+                        input_data=sample_input,
+                        depth=3,
+                        verbose=2,
+                        col_names=("input_size", "output_size", "num_params", "params_percent"),
+                        row_settings=("var_names",),
+                    )
+        except Exception as e:
+            log.warning(f"Warning: Could not generate detailed summary: {e}")
+            log.warning(f"Model type: {type(self)}")
+            log.warning(f"Actual network type: {type(self.model)}")

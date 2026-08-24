@@ -1,0 +1,12 @@
+data:
+  dataset_path: /home/docker/DATA/D-Gait/D-Gait-Silhouette-preprocess
+  resolution: 64
+  dataset: D-Gait
+  cache: true
+  load_all_train_data: false
+  load_all_test_data: false
+
+  partitioning: 
+    split: !tuple [0.70, 0.10, 0.20] # train, val, test
+    seed: 42
+    split_mode: weighted_random # random | weighted_random | subject | sequence

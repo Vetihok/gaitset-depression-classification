@@ -1,12 +1,11 @@
-*.pyc
-__pycache__/
-model/
-model_3/
-model_4/
 tests/
+exp/
+partition/
+gaitset/
 *.txt
 *.log
 *.md
+!README.md
 *.pth
 *.pt
 *.ckpt
@@ -14,7 +13,7 @@ tests/
 *.npz
 *.zip
 *.tar
-*.yaml
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -169,6 +168,7 @@ activemq-data/
 .env
 .envrc
 .venv
+.vscode/
 env/
 venv/
 ENV/

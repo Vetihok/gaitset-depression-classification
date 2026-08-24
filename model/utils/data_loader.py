@@ -11,12 +11,9 @@ from config import conf
 
 from .data_set import DataSet
 from opts import get_opts
+from env_manager import EnvManager
 
 log = logging.getLogger(__name__)
-"""_opts = get_opts(parse_if_missing=False, defaults={'log_level': logging.INFO})
-_level = _opts.log_level if (_opts is not None and hasattr(_opts, 'log_level')) else logging.INFO
-log.setLevel(_level)"""
-
 
 def clinical_label(patient_id):
     if patient_id.startswith('D_'):
@@ -55,7 +52,50 @@ def _stratified_split_patients(pid_list, patient_to_label, ratios, rng):
     return [train, val, test]
 
 
-def load_data(dataset_path, resolution, dataset, partitioning, k_fold, cache=True):
+def load_data(dataset_path, resolution, dataset, partitioning, cache=True, **kwargs):
+    """Load dataset samples and partition them into train, validation, and test sets.
+
+        Args:
+                dataset_path: Root directory containing one directory per patient or subject.
+                resolution: Input resolution passed to each :class:`DataSet`.
+                dataset: Dataset name. ``CASIA-B`` excludes subject ``005`` because its data
+                        is incomplete.
+                partitioning: Mapping containing ``split`` (three ratios summing to 1.0),
+                        ``split_mode``, and optionally ``seed``. Supported split modes are:
+
+                                                * ``sequence``: Shuffles and assigns individual sequences. A patient may
+                                                    therefore occur in multiple splits.
+                                                * ``subject``: Assigns sorted patient IDs contiguously. Patients are kept
+                                                    exclusively in one split, but the resulting class balance is not
+                                                    explicitly controlled.
+                                                * ``random``: Shuffles patient IDs using ``seed`` and assigns them
+                                                    contiguously. Patients are kept exclusively in one split, but class
+                                                    balance is not explicitly controlled.
+                                                * ``weighted_random``: Shuffles patients separately within each clinical
+                                                    label and assigns each label group by the requested ratios. Patients
+                                                    are kept exclusively in one split and class proportions are
+                                                    approximately preserved.
+
+                                                The ratios determine contiguous chunk sizes using rounded counts; any
+                                                remainder is assigned to the test split. ``seed`` controls the local
+                                                random generator used by ``sequence``, ``random``, and
+                                                ``weighted_random``. Existing partition files are reused when present.
+
+                cache: Whether to enable caching in each :class:`DataSet`.
+                **kwargs: Additional unused compatibility arguments.
+
+        Returns:
+                A ``(train_source, val_source, test_source)`` tuple of :class:`DataSet`
+                instances.
+
+        Raises:
+                ValueError: If split ratios are invalid or ``split_mode`` is unsupported.
+
+        Notes:
+            The returned sources are ``(train_source, val_source, test_source)``. For
+            patient-based modes, all samples belonging to a patient are placed in the same
+            source; for ``sequence`` mode, samples are selected independently by index.
+        """
     seq_dir = list()
     view = list()
     seq_type = list()
@@ -63,7 +103,6 @@ def load_data(dataset_path, resolution, dataset, partitioning, k_fold, cache=Tru
     patient_id = list()
 
     c = 0
-    # log.debug(f"{str(sorted(os.listdir(dataset_path)))=:.100}")
     for _patient_id in sorted(os.listdir(dataset_path)):
         # In CASIA-B, data of subject #5 is incomplete.
         # Thus, we ignore it in training.
@@ -72,8 +111,6 @@ def load_data(dataset_path, resolution, dataset, partitioning, k_fold, cache=Tru
         label_path = osp.join(dataset_path, _patient_id)
         if c <= 3:
             c += 1
-            # log.debug(f"_patient_id = {type(_patient_id)} = {clinical_label(_patient_id)}")
-            # log.debug(f"label_path = {label_path}")
         for _seq_type in sorted(os.listdir(label_path)):
             seq_type_path = osp.join(label_path, _seq_type)
             for _view in sorted(os.listdir(seq_type_path)):
@@ -99,7 +136,8 @@ def load_data(dataset_path, resolution, dataset, partitioning, k_fold, cache=Tru
 
     rng = np.random.RandomState(seed)  # local RNG, doesn't touch global numpy state
 
-    pid_path = osp.join(conf['WORK_PATH'], 'partition')
+    env = EnvManager.get_instance()
+    pid_path = osp.join(env.work_path, 'partition')
     os.makedirs(pid_path, exist_ok=True)
     ratio_str = '-'.join(f"{r:.2f}" for r in split_ratios)
     seed_str = f"_seed{seed}" if seed is not None else ""
@@ -132,19 +170,12 @@ def load_data(dataset_path, resolution, dataset, partitioning, k_fold, cache=Tru
         else:
             raise ValueError(f"Unknown split_mode: {split_mode!r}")
 
-        # log.debug(f"split_mode = {split_mode}, ratios = {split_ratios}")
-        # log.debug(f"partition sizes = {[len(p) for p in partition]}")
         with open(pid_fname, 'wb') as f:
             pickle.dump({'split_mode': split_mode, 'partition': partition}, f)
 
-    # log.debug(f"pid_fname = {pid_fname}")
     with open(pid_fname, 'rb') as f:
         saved = pickle.load(f)
     train_keys, val_keys, test_keys = saved['partition']
-
-    # log.debug(f"train_keys = {train_keys}")
-    # log.debug(f"val_keys = {val_keys}")
-    # log.debug(f"test_keys = {test_keys}")
 
     if split_mode == 'sequence':
         def build_source(idxs):

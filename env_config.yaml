@@ -1,0 +1,10 @@
+WORK_PATH: work
+SUBFOLDER:
+CUDA_VISIBLE_DEVICES: "0,1"
+USE_CPU: false
+NUM_RUNS: 5
+
+# When option --restore_dir is used
+OVERWRITE_TEST_RESULTS: false
+OVERWRITE_AVERAGE_RESULTS: false
+RESTORE_MODE: best # last | best | epoch (restore_epoch in config file)

@@ -1,0 +1,77 @@
+plots:
+  labels:  # Aliases for the configurations to be displayed in the plots
+    ce: "CE"
+    triplet_ce_0.5: "CE+TL 0.5"
+    triplet_ce_1.0: "CE+TL 1.0"
+    triplet_ce_2.0: "CE+TL 2.0"
+    triplet_ce_2.5: "CE+TL 2.5"
+    triplet_ce_3.0: "CE+TL 3.0"
+    triplet_ce_3.5: "CE+TL 3.5"
+  
+  roc_curve:
+    enabled: true
+    title: ""
+    figsize: [10, 8]
+    dpi: 300
+    alpha: 0.8
+    linewidth: 3
+    show_std: true
+    legend_loc: "lower right"
+    show_diagonal: true
+    diagonal_color: "gray"
+    diagonal_linestyle: "--"
+    xlabel: "False Positive Rate"
+    ylabel: "True Positive Rate"
+    grid: true
+  
+  bar_chart_by_group:
+    enabled: true
+    title: ""
+    dpi: 300
+    legend_loc: "outside"
+    bar_width: 0.25
+    show_std: true
+    metrics:  # Metrics to plot in the bar chart
+      - key: precision
+        label: Precision
+        color: "#53A653"
+        row: 0
+      - key: recall
+        label: Recall
+        color: "#D9534F"
+        row: 0
+      - key: f1
+        label: F1-score
+        color: "#7F77DD"
+        row: 0
+  
+  dashboard:
+    enabled: true
+    title: "=== Sequence-level metrics: test ==="
+
+# Global style
+style:
+  font_family: "sans-serif"
+  title_fontsize: 16
+  label_fontsize: 14
+  tick_fontsize: 14
+  legend_fontsize: 14
+  default_colors:
+    - "#1f77b4"
+    - "#ff7f0e"
+    - "#2ca02c"
+    - "#d62728"
+    - "#9467bd"
+    - "#8c564b"
+    - "#e377c2"
+    - "#7f7f7f"
+    - "#bcbd22"
+    - "#17becf"
+  default_linestyles:
+    - "-"
+    - "--"
+    - "-."
+    - ":"
+  line_width: 2
+  marker_size: 8
+  image_format: pdf # png | pdf

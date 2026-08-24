@@ -4,11 +4,12 @@
 import logging
 import os
 from copy import deepcopy
+from pathlib import Path
 import sys
 
 import numpy as np
 
-from classify_depression import get_cwd
+from env_manager import EnvManager
 
 from .utils import load_data
 from .model import Model
@@ -16,9 +17,23 @@ from opts import get_opts
 
 log = logging.getLogger(__name__)
 
+_DATA_CACHE = {}
+
 def initialize_data(config, train=False, test=False):
     log.info("Initializing data source...")
-    train_source, val_source, test_source = load_data(**config['data'])
+    
+    if config['data']['cache']:
+        key = ("train_source", "val_source", "test_source")
+        if key in _DATA_CACHE:
+            log.debug("Using cached data sources.")
+            train_source, val_source, test_source = _DATA_CACHE[key]
+        else:
+            train_source, val_source, test_source = load_data(**config['data'])
+            _DATA_CACHE[key] = train_source, val_source, test_source
+            log.debug(f"Saved data sources in cache.")
+    else:
+        train_source, val_source, test_source = load_data(**config['data'])
+    
     if train:
         log.info("Loading training data...")
         train_source.load_all_data()
@@ -51,7 +66,6 @@ def initialize_model(config, train_source, val_source, test_source):
         
         'num_workers': model_config.get('num_workers', 0),
         'batch_size': model_config.get('batch_size', (8, 16)),
-        #'train_pid_num': data_config['pid_num'],
         'frame_num': model_config.get('frame_num', 30),
         'train_source': train_source,
         'val_source': val_source,
@@ -72,23 +86,23 @@ def initialize_model(config, train_source, val_source, test_source):
     model_param['save_name'] = '_'.join(map(str,[
         model_config['model_name'],
         data_config['dataset'],
-        #data_config['pid_num'],
-        #data_config['pid_shuffle'],
         model_config['hidden_dim'],
-        #model_config['margin'],
         batch_size,
-        #model_config['hard_or_full_trip'],
         model_config['frame_num'],
     ]))
 
     m = Model(**model_param)
     opt = get_opts()
-    
-    if opt.restore_dir or m.restore_epoch != 0:
-        log.info(f'Loading model checkpoint at {config.get("RESTORE_DIR", None)}')
-        m.load(m.restore_epoch, find_last_epoch=bool(opt.restore_dir))
-        # if model_config.get("pretrained_model", {}).get("enabled", False):
-        #     log.warning("Can't load pretrained model if restore_epoch is not equal to 0.")
+    env = EnvManager.get_instance()
+
+    checkpoint_dir = Path(env.get_dir(checkpoint=True, mkdir=False))
+    if (opt.restore_dir or m.restore_epoch != 0):
+        if checkpoint_dir.exists() and any(checkpoint_dir.iterdir()):
+            log.info(f'Loading model checkpoint at {opt.restore_dir}')
+            m.load(m.restore_epoch, mode=env.restore_mode)
+        else:
+            log.warning(f'Checkpoint directory not find or empty at {checkpoint_dir} ')
+            log.warning(f'No checkpoint loaded.')
     else:
         if model_config.get("pretrained_model", {}).get("enabled", False):
             m.load_pretrained(model_config.get("pretrained_model", {})["PRETRAINED_PATH"])
@@ -98,9 +112,9 @@ def initialize_model(config, train_source, val_source, test_source):
 
 
 def initialization(config, train=False, test=False):
+    """
+    Initialize data sources and model.
+    """
     log.info("Initialzing...")
-    #WORK_PATH = get_cwd()
-    #os.chdir(WORK_PATH)
-    os.environ["CUDA_VISIBLE_DEVICES"] = config["CUDA_VISIBLE_DEVICES"]
     train_source, val_source, test_source = initialize_data(config, train, test)
     return initialize_model(config, train_source, val_source, test_source)

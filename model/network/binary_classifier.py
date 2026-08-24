@@ -22,7 +22,7 @@ class BinaryClassificationNet(nn.Module):
 
         # 3. The Bottleneck Classifier Head
         # This replaces the single nn.Linear layer to prevent direct memorization
-        self.encoder_p = dropout_cfg.get('head_p', 0.4)
+        self.head_p = dropout_cfg.get('head_p', 0.4)
         self.classifier = self._build_classifier_head(classifier_head_cfg)
         if freeze_cfg.get("freeze_classifier", False):
             self.freeze_classifier()
@@ -54,7 +54,7 @@ class BinaryClassificationNet(nn.Module):
                 negative_slope = layer_cfg.get('negative_slope', 0.1)
                 layers.append(nn.LeakyReLU(negative_slope=negative_slope))
             elif layer_type == 'dropout':
-                p = layer_cfg.get('p', self.encoder_p)
+                p = layer_cfg.get('p', self.head_p)
                 layers.append(nn.Dropout(p=p))
             elif layer_type == 'sigmoid':
                 layers.append(nn.Sigmoid())

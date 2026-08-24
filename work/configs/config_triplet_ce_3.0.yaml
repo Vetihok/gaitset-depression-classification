@@ -1,0 +1,115 @@
+model:
+  model_name: D-GaitSet
+  save_summary: false
+  num_epochs : 50
+  restore_epoch: 0
+  eval_interval: 1
+  hidden_dim: 256
+  num_workers: 6
+  frame_num: 30
+  batch_size: !tuple [4, 16] # during training, [4, 16] means 4 persons and 16 sequences per person
+  embeddings_batch_size: 64 # during test
+
+  pretrained_model:
+    enabled: true
+    load_state_dict_strict: false # default in code : True
+    PRETRAINED_PATH: /home/docker/EXPERIMENTS/GaitSet/restore_checkpoint/GaitSet/GaitSet_CASIA-B_73_False_256_0.2_128_full_30-80000-encoder.ptm
+  
+  sampler:
+    type: CETripletSampler # ClassificationSampler | WeightedRandomSampler | SequentialSampler | RandomSampler | CETripletSampler
+    sample_type: all # random | all (in collate_fn)
+    # WeightedRandomSampler
+    replacement: false
+    weight_damping_factor: 0.5 # default: 1.0
+  
+  loss_config:
+    triplet:
+      enabled: true
+      weight: 3.0
+      margin: 0.2
+      hard_or_full: full
+    cross_entropy:
+      enabled: true
+      weight: 1.0
+      label_smoothing: 0.0
+      class_weights: null
+      reduction: mean # none | mean | sum
+    focal:
+      enabled: false
+      weight: 1.0
+      alpha: 0.25
+      gamma: 2.0
+      class_weights: null
+      reduction: mean # none | mean | sum
+
+  optimizer:
+    type: Adam        # Adam | SGD
+    encoder_lr: 0.0001
+    classifier_lr: 0.0001
+    weight_decay: 0.0001
+  
+  scheduler:
+    enabled: true
+    type: MultiStepLR   # CosineAnnealingLR | OneCycleLR | PolynomialLR | MultiStepLR
+    # CosineAnnealingLR
+    eta_min: 0
+    # OneCycleLR
+    max_lr: 0.01
+    pct_start: 0.3
+    # PolynomialLR
+    power: 1.0
+    min_lr: 0.0
+    # MultiStepLR
+    milestones: [15, 25, 35]
+    gamma: 0.1
+
+  r_drop:
+    enabled: false
+    alpha: 10.0
+
+  dropout:
+    enabled: true
+    encoder_p: 0.15
+    head_p: 0.3
+
+  classifier_head:
+    layers: []
+
+  freeze:
+    enabled: false
+    freeze_whole_encoder: false
+    unfreeze_epoch: -1 # set to -1 to deactivate
+    encoder_layers:
+      set_layer1: true
+      set_layer2: true
+      set_layer3: true
+      set_layer4: false 
+      set_layer5: false
+      set_layer6: false
+      gl_layer1: true
+      gl_layer2: true
+      gl_layer3: false 
+      gl_layer4: false
+      gl_hpm: false
+      x_hpm: false
+
+  early_stop:
+    enabled: true
+    patience: 15
+
+  augmentation:
+    enabled: true
+    prob: 0.50
+    horizontal_flip: false
+    gaussian_noise: false
+    random_erasing: false
+    random_translation: true
+    max_translation: 4
+    rotation: false
+    max_rotation: 5.0
+    border_erasing: false
+    border_erasing_prob: 0.5
+    gaussian_blur: false
+    blur_sigma: 0.8
+    border_scale: false
+    border_scale_px: 1

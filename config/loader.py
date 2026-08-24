@@ -3,11 +3,9 @@
 import os
 import yaml
 
-# Get the directory where this file is located (the config folder)
-CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
+from env_manager import EnvManager
 
-
-def load_config(config_id):
+def load_config(env: EnvManager, config_id):
     """Load configuration from a YAML file based on config_id.
     
     Args:
@@ -20,11 +18,11 @@ def load_config(config_id):
         FileNotFoundError: If the config file doesn't exist
         yaml.YAMLError: If the YAML file is malformed
     """
-    config_file = os.path.join(CONFIG_DIR, f"config_{config_id}.yaml")
+    config_file = os.path.join(env.get_configs_dir(), f"config_{config_id}.yaml")
     
     if not os.path.exists(config_file):
         raise FileNotFoundError(
-            f"Config file 'config_{config_id}.yaml' not found in {CONFIG_DIR}. "
+            f"Config file 'config_{config_id}.yaml' not found in {env.get_configs_dir()}. "
             f"Available configs: {list_available_configs()}"
         )
     
@@ -40,11 +38,18 @@ def load_config(config_id):
     
     return conf
 
+def _load_yaml_file(path):
+    def tuple_constructor(loader, node):
+        return tuple(loader.construct_sequence(node))
+    yaml.SafeLoader.add_constructor('!tuple', tuple_constructor)
+    with open(path, 'r') as f:
+        data = yaml.safe_load(f)
+    return data if isinstance(data, dict) else {}
 
-def list_available_configs():
+def list_available_configs(env: EnvManager):
     """List all available config_*.yaml files in the config directory."""
     configs = []
-    for filename in sorted(os.listdir(CONFIG_DIR)):
+    for filename in sorted(os.listdir(env.get_configs_dir())):
         if filename.startswith('config_') and filename.endswith('.yaml'):
             configs.append(filename)
     return configs
